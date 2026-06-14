@@ -1,354 +1,224 @@
-from flask import Flask, render_template_string, request, redirect, url_for, session, flash, jsonify
+from flask import Flask, render_template_string, request, session, jsonify
 from twilio.rest import Client
-from datetime import datetime, timezone, timedelta
+from datetime import timezone, timedelta
 
 app = Flask(__name__)
 app.secret_key = "change_this_secret"
 
 client = None
-last_seen_time = None
 numbers_cache = []
-my_numbers_cache = []
-
-# =========================
-# 🇧🇩 BANGLADESH TIME
-# =========================
+search_results = []
 
 BD_TZ = timezone(timedelta(hours=6))
+
 
 def to_bd_time(dt):
     if not dt:
         return "Unknown"
-    return dt.replace(tzinfo=timezone.utc).astimezone(BD_TZ).strftime("%I:%M %p  %d-%m-%Y")
+    return dt.replace(tzinfo=timezone.utc).astimezone(BD_TZ).strftime("%I:%M %p %d-%m-%Y")
 
-# =========================
-# UI
-# =========================
 
-TEMPLATE = """
-<!DOCTYPE html>
+HTML = """
+<!doctype html>
 <html>
 <head>
-    <title>Twilio Dashboard</title>
-    <style>
-        body {margin:0;font-family:Arial;background:linear-gradient(135deg,#eef2ff,#ffe4f1);}
-        .container{max-width:900px;margin:auto;padding:20px;}
-        .card{background:white;padding:18px;border-radius:14px;margin-bottom:15px;box-shadow:0 10px 25px rgba(0,0,0,0.08);}
-        h2{color:#d63384;}
-        input{width:100%;padding:10px;margin:6px 0;border-radius:10px;border:1px solid #ddd;}
-        button{padding:10px;width:100%;border:none;border-radius:10px;background:linear-gradient(135deg,#ff4d8d,#ff2e63);color:white;font-weight:bold;cursor:pointer;margin-top:5px;}
-        button:hover{opacity:0.9;}
+<style>
+body { font-family: Arial; margin:20px; }
+.box { border:1px solid #ddd; padding:10px; margin-bottom:10px; border-radius:8px; }
+.row { display:flex; justify-content:space-between; margin:5px 0; }
+button { padding:6px 10px; border:none; border-radius:5px; cursor:pointer; }
+.red { background:#e74c3c; color:white; }
+.green { background:#2ecc71; color:white; }
+.blue { background:#3498db; color:white; }
 
-        .sms{padding:10px;border-bottom:1px solid #eee;}
-        .from{font-weight:bold;}
-        .body{color:#555;}
-        .time{font-size:12px;color:#888;}
-        .inbox{max-height:300px;overflow-y:auto;}
+.sms { border-bottom:1px solid #eee; padding:5px; }
+.from { font-weight:bold; }
+.time { font-size:12px; color:gray; }
 
-        .tag{display:flex;justify-content:space-between;align-items:center;
-              padding:8px;background:#f1f1f1;border-radius:8px;margin:5px;}
-
-        .btn-red{background:linear-gradient(135deg,#ff3b3b,#b30000)!important;width:auto;padding:5px 8px;}
-
-        .btn-dark{background:#333!important;}
-
-        #lastTime{color:#666;margin-bottom:10px;}
-
-        .footer{
-            text-align:center;
-            margin-top:20px;
-            color:#888;
-            font-size:13px;
-        }
-    </style>
+.footer { text-align:center; font-size:13px; color:gray; margin-top:10px; }
+</style>
 </head>
 <body>
 
-<div class="container">
+<h2>📱 Twilio ALL-IN-ONE PANEL</h2>
 
-<h2>📞 Twilio Dashboard</h2>
-
-{% for m in get_flashed_messages() %}
-<div class="sms">{{ m }}</div>
-{% endfor %}
+<div class="footer">
+Creator: <b>Rakibul Islam</b>
+</div>
 
 {% if not session.get('logged_in') %}
 
-<div class="card">
-    <h3>Login</h3>
-    <form method="POST" action="/login">
-        <input name="sid" placeholder="Twilio SID" required>
-        <input name="token" placeholder="Twilio Auth Token" required>
-        <button>Login</button>
-    </form>
+<div class="box">
+<h3>Login</h3>
+<form method="POST">
+    <input name="sid" placeholder="SID" required><br><br>
+    <input name="token" placeholder="TOKEN" required><br><br>
+    <button class="blue" name="action" value="login">Login</button>
+</form>
 </div>
 
 {% else %}
 
-<!-- MY NUMBERS -->
-<div class="card">
-    <h3>📱 My Twilio Numbers</h3>
+<!-- SEARCH -->
+<div class="box">
+<h3>🌍 Search Numbers</h3>
 
-    {% if my_numbers %}
-        {% for n in my_numbers %}
-        <div class="tag">
-            <span>{{ n }}</span>
+<form method="POST">
+    <select name="country">
+        <option value="US">🇺🇸 US</option>
+        <option value="CA">🇨🇦 CA</option>
+    </select>
 
-            <!-- DELETE BUTTON -->
-            <form method="POST" action="/delete-number">
-                <input type="hidden" name="number" value="{{ n }}">
-                <button class="btn-red">🗑️ Delete</button>
-            </form>
-        </div>
-        {% endfor %}
-    {% else %}
-        <i>No numbers found</i>
-    {% endif %}
-
-    <hr>
-
-    <!-- DELETE ALL -->
-    <form method="POST" action="/delete-all-numbers">
-        <button class="btn-dark">🗑️ Delete ALL Numbers</button>
-    </form>
-
-    <br>
-
-    <!-- CUSTOM DELETE -->
-    <form method="POST" action="/delete-custom-number">
-        <input name="number" placeholder="Enter number to delete">
-        <button class="btn-red">✍️ Delete Custom Number</button>
-    </form>
+    <input name="area" placeholder="Area code (optional)">
+    <button class="green" name="action" value="search">Search</button>
+</form>
 </div>
 
-<!-- LIVE SMS -->
-<div class="card">
-    <h3>📩 Live SMS</h3>
+<!-- RESULTS -->
+{% if search_results %}
+<div class="box">
+<h3>📋 Available Numbers</h3>
 
-    <div id="lastTime">🕒 Loading...</div>
-    <div class="inbox" id="inbox">Loading...</div>
+{% for n in search_results %}
+<div class="row">
+    <span>{{ n }}</span>
 
-    <form method="GET" action="/old-sms">
-        <button class="btn-dark">📜 Old SMS</button>
+    <form method="POST">
+        <input type="hidden" name="number" value="{{ n }}">
+        <button class="blue" name="action" value="buy">Buy</button>
     </form>
 </div>
-
-<!-- OLD SMS -->
-{% if old_messages %}
-<div class="card">
-    <h3>📜 Old SMS</h3>
-
-    {% for m in old_messages %}
-    <div class="sms">
-        <div class="from">{{ m.from }}</div>
-        <div class="body">{{ m.body }}</div>
-        <div class="time">🕒 {{ m.time }}</div>
-    </div>
-    {% endfor %}
+{% endfor %}
 </div>
 {% endif %}
 
-<div class="card">
-    <a href="/logout"><button class="btn-dark">Logout</button></a>
+<!-- OWNED -->
+<div class="box">
+<h3>📞 My Numbers</h3>
+
+{% for n in numbers %}
+<div class="row">
+    <span>{{ n }}</span>
+
+    <form method="POST">
+        <input type="hidden" name="number" value="{{ n }}">
+        <button class="red" name="action" value="delete">Delete</button>
+    </form>
 </div>
+{% endfor %}
+</div>
+
+<!-- SMS -->
+<div class="box">
+<h3>📩 SMS Inbox</h3>
+<button onclick="loadSMS()" class="blue">Load SMS</button>
+<div id="smsBox"></div>
+</div>
+
+<form method="POST">
+    <button class="red" name="action" value="logout">Logout</button>
+</form>
 
 {% endif %}
-
-<div class="footer">
-    Created by <b>Rakibul Islam</b>
-</div>
-
-</div>
 
 <script>
-let lastData = "";
-let notified = new Set();
+function loadSMS(){
+    fetch('/?action=sms')
+    .then(r => r.json())
+    .then(data => {
+        let box = document.getElementById("smsBox");
+        box.innerHTML = "";
 
-if ("Notification" in window) {
-    Notification.requestPermission();
-}
-
-function notify(msg) {
-    if (Notification.permission === "granted") {
-        new Notification("📩 New SMS", {
-            body: `From: ${msg.from} → ${msg.body}`
+        data.messages.forEach(m => {
+            box.innerHTML += `
+                <div class="sms">
+                    <div class="from">${m.from}</div>
+                    <div>${m.body}</div>
+                    <div class="time">${m.time}</div>
+                </div>
+            `;
         });
-    }
-}
-
-async function loadInbox() {
-    const res = await fetch("/api/messages");
-    const data = await res.json();
-
-    let str = JSON.stringify(data);
-    if (str === lastData) return;
-    lastData = str;
-
-    data.messages.forEach(m => {
-        let key = m.from + m.body;
-        if (!notified.has(key)) {
-            notified.add(key);
-            notify(m);
-        }
     });
-
-    document.getElementById("inbox").innerHTML =
-        data.messages.length === 0
-        ? "<i>No new messages</i>"
-        : data.messages.map(m => `
-            <div class="sms">
-                <div class="from">${m.from}</div>
-                <div class="body">${m.body}</div>
-                <div class="time">🕒 ${m.time}</div>
-            </div>
-        `).join("");
-
-    if (data.last_time) {
-        document.getElementById("lastTime").innerHTML =
-            "🕒 Last SMS: " + data.last_time;
-    }
 }
-
-setInterval(loadInbox, 3000);
-loadInbox();
 </script>
 
 </body>
 </html>
 """
 
-# =========================
-# ROUTES
-# =========================
 
-@app.route("/")
+@app.route("/", methods=["GET", "POST"])
 def index():
+    global client, numbers_cache, search_results
+
+    action = request.args.get("action") or request.form.get("action")
+
+    if action == "login":
+        sid = request.form["sid"]
+        token = request.form["token"]
+
+        client = Client(sid, token)
+        session["logged_in"] = True
+        refresh_numbers()
+
+    elif action == "logout":
+        client = None
+        numbers_cache = []
+        search_results = []
+        session.clear()
+
+    elif action == "search" and client:
+        country = request.form["country"]
+        area = request.form.get("area")
+
+        query = client.available_phone_numbers(country).local
+
+        result = query.list(area_code=area, limit=10)
+        search_results = [n.phone_number for n in result]
+
+    elif action == "buy" and client:
+        number = request.form["number"]
+
+        client.incoming_phone_numbers.create(phone_number=number)
+        refresh_numbers()
+
+    elif action == "delete" and client:
+        number = request.form["number"]
+
+        for n in client.incoming_phone_numbers.list():
+            if n.phone_number == number:
+                client.incoming_phone_numbers(n.sid).delete()
+
+        refresh_numbers()
+
+    elif action == "sms" and client:
+        msgs = client.messages.list(limit=30)
+
+        data = []
+        for m in msgs:
+            if m.direction != "inbound":
+                continue
+
+            data.append({
+                "from": m.from_,
+                "body": m.body,
+                "time": to_bd_time(m.date_sent)
+            })
+
+        return jsonify({"messages": data})
+
     return render_template_string(
-        TEMPLATE,
+        HTML,
         numbers=numbers_cache,
-        my_numbers=my_numbers_cache,
-        old_messages=None
+        search_results=search_results
     )
 
-@app.route("/login", methods=["POST"])
-def login():
-    global client, my_numbers_cache
-
-    sid = request.form["sid"]
-    token = request.form["token"]
-
-    client = Client(sid, token)
-    session["logged_in"] = True
-
-    nums = client.incoming_phone_numbers.list()
-    my_numbers_cache = [n.phone_number for n in nums]
-
-    flash("Login successful")
-    return redirect(url_for("index"))
-
-@app.route("/logout")
-def logout():
-    global client, my_numbers_cache, numbers_cache, last_seen_time
-
-    client = None
-    my_numbers_cache = []
-    numbers_cache = []
-    last_seen_time = None
-    session.clear()
-
-    flash("Logged out")
-    return redirect(url_for("index"))
-
-# =========================
-# DELETE SINGLE NUMBER
-# =========================
-
-@app.route("/delete-number", methods=["POST"])
-def delete_number():
-    number = request.form.get("number")
-
-    nums = client.incoming_phone_numbers.list()
-    for n in nums:
-        if n.phone_number == number:
-            client.incoming_phone_numbers(n.sid).delete()
-
-    refresh_numbers()
-    flash("Number deleted")
-    return redirect(url_for("index"))
-
-# =========================
-# DELETE ALL NUMBERS
-# =========================
-
-@app.route("/delete-all-numbers", methods=["POST"])
-def delete_all_numbers():
-    nums = client.incoming_phone_numbers.list()
-
-    for n in nums:
-        client.incoming_phone_numbers(n.sid).delete()
-
-    refresh_numbers()
-    flash("All numbers deleted")
-    return redirect(url_for("index"))
-
-# =========================
-# CUSTOM DELETE
-# =========================
-
-@app.route("/delete-custom-number", methods=["POST"])
-def delete_custom_number():
-    number = request.form.get("number")
-
-    nums = client.incoming_phone_numbers.list()
-
-    for n in nums:
-        if n.phone_number == number:
-            client.incoming_phone_numbers(n.sid).delete()
-
-    refresh_numbers()
-    flash("Custom number deleted")
-    return redirect(url_for("index"))
-
-# =========================
-# HELPERS
-# =========================
 
 def refresh_numbers():
-    global my_numbers_cache
-    my_numbers_cache = [n.phone_number for n in client.incoming_phone_numbers.list()]
+    global numbers_cache
+    if client:
+        numbers_cache = [n.phone_number for n in client.incoming_phone_numbers.list()]
 
-# =========================
-# SMS API
-# =========================
-
-@app.route("/api/messages")
-def api_messages():
-    msgs = client.messages.list(limit=50)
-
-    incoming = []
-    seen = set()
-
-    for m in msgs:
-        if m.direction != "inbound":
-            continue
-        if m.sid in seen:
-            continue
-        seen.add(m.sid)
-
-        incoming.append({
-            "from": m.from_,
-            "body": m.body,
-            "time": to_bd_time(m.date_sent)
-        })
-
-    return jsonify({
-        "messages": incoming,
-        "last_time": "Live"
-    })
-
-# =========================
-# RUN
-# =========================
 
 if __name__ == "__main__":
     app.run(debug=True)
