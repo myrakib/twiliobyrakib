@@ -40,10 +40,10 @@ button { padding:6px 10px; border:none; border-radius:5px; cursor:pointer; }
 </head>
 <body>
 
-<h2>📱 Twilio ALL-IN-ONE PANEL</h2>
+<h2>📱 id and token </h2>
 
 <div class="footer">
-Creator: <b>Rakibul Islam</b>
+Creator: <b>Rakibul Islam tg @mri013</b>
 </div>
 
 {% if not session.get('logged_in') %}
@@ -51,7 +51,7 @@ Creator: <b>Rakibul Islam</b>
 <div class="box">
 <h3>Login</h3>
 <form method="POST">
-    <input name="sid" placeholder="SID" required><br><br>
+    <input name="sid" placeholder="ID" required><br><br>
     <input name="token" placeholder="TOKEN" required><br><br>
     <button class="blue" name="action" value="login">Login</button>
 </form>
@@ -61,11 +61,11 @@ Creator: <b>Rakibul Islam</b>
 
 <!-- SEARCH -->
 <div class="box">
-<h3>🌍 Search Numbers</h3>
+<h3>🌍 find Numbers</h3>
 
 <form method="POST">
     <select name="country">
-        <option value="US">🇺🇸 US</option>
+        
         <option value="CA">🇨🇦 CA</option>
     </select>
 
@@ -111,7 +111,7 @@ Creator: <b>Rakibul Islam</b>
 <!-- SMS -->
 <div class="box">
 <h3>📩 SMS Inbox</h3>
-<button onclick="loadSMS()" class="blue">Load SMS</button>
+<button onclick="loadSMS()" class="green">GET CODE</button>
 <div id="smsBox"></div>
 </div>
 
