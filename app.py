@@ -1,145 +1,96 @@
 from flask import Flask, request, session, jsonify, render_template_string
 from twilio.rest import Client
-from datetime import datetime
-from zoneinfo import ZoneInfo
 
 app = Flask(__name__)
-app.secret_key = "change-this-secret-key"
-
-# =========================
-# 🌈 FULL UI + REMEMBER LOGIN
-# =========================
+app.secret_key = "change-me"
 
 HTML = """
-<!DOCTYPE html>
+<!doctype html>
 <html>
 <head>
-<title>Smart Panel BY Rakibul Islam 💖</title>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Twilio Dashboard</title>
+
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
 
 <style>
 body{
-    margin:0;
-    font-family:Arial;
-    background:linear-gradient(-45deg,#0f172a,#1e293b,#111827,#0b1220);
-    background-size:400% 400%;
-    animation:bg 10s ease infinite;
-    color:white;
-}
-
-@keyframes bg{
-    0%{background-position:0% 50%;}
-    50%{background-position:100% 50%;}
-    100%{background-position:0% 50%;}
-}
-
-.container{
-    max-width:900px;
-    margin:auto;
+    background:#f4f8ff;
     padding:20px;
 }
-
-/* LOGIN */
-.login-box{
-    background:linear-gradient(135deg,#ff6fa1,#ff9ac1);
-    padding:15px;
-    border-radius:18px;
-    text-align:center;
-}
-
-/* SECTIONS */
-.box{
-    padding:15px;
-    border-radius:18px;
-    margin-top:15px;
-}
-
-/* COLORS */
-.numbers{background:linear-gradient(135deg,#4da9ff,#6fc2ff);}
-.buy{background:linear-gradient(135deg,#a855f7,#c084fc);}
-.sms{background:linear-gradient(135deg,#22c55e,#86efac);}
-
-/* INPUT */
-input,select{
-    padding:10px;
-    border-radius:12px;
+.card{
     border:none;
-    margin:5px;
-    width:220px;
+    border-radius:20px;
+    box-shadow:0 4px 15px rgba(0,0,0,.08);
 }
-
-/* BUTTONS */
-button{
-    padding:10px 15px;
-    border:none;
-    border-radius:12px;
-    cursor:pointer;
-    font-weight:bold;
+.big-btn{
+    border-radius:15px;
 }
-
-.pink{background:#ff4d88;color:white;}
-.blue{background:#2563eb;color:white;}
-.green{background:#16a34a;color:white;}
-.red{background:#ef4444;color:white;}
-
-/* ROW */
-.row{
-    display:flex;
-    justify-content:space-between;
-    align-items:center;
-    background:rgba(255,255,255,0.2);
-    padding:10px;
-    margin:8px 0;
-    border-radius:12px;
-    color:black;
+.sms-box{
+    max-height:350px;
+    overflow:auto;
 }
 </style>
 </head>
-
 <body>
 
 <div class="container">
 
-<h2 style="text-align:center;">💖 Smart Control Panel BY Rakibul Islam</h2>
+<h2 class="text-center mb-4">
+📱 Twilio Manager
+</h2>
 
-<!-- LOGIN -->
-<div class="login-box">
-    <h3>Login ID:TOKEN</h3>
-    <input id="auth" placeholder="ID:TOKEN">
-    <button class="pink" onclick="login()">LOGIN</button>
+<div id="loginCard" class="card p-4 mb-4">
+<h4>Login</h4>
+
+<input id="sid" class="form-control mb-2" placeholder="Account SID">
+<input id="token" class="form-control mb-3" placeholder="Auth Token">
+
+<button class="btn btn-primary big-btn" onclick="login()">
+Login
+</button>
+
+<div id="loginMsg" class="mt-3"></div>
 </div>
 
-<!-- APP -->
-<div id="app" style="display:none;">
+<div id="dashboard" style="display:none">
 
-<!-- NUMBERS -->
-<div class="box numbers">
-    <h3>📱 My Numbers</h3>
-    <div id="numbers"></div>
+<div class="card p-3 mb-3">
+<div class="d-flex justify-content-between">
+<div>✅ Logged In</div>
+<div>
+<button class="btn btn-danger btn-sm" onclick="logout()">
+Logout
+</button>
+</div>
+</div>
 </div>
 
-<!-- BUY -->
-<div class="box buy">
-    <h3>🛒 Buy Number</h3>
+<div class="card p-3 mb-3">
+<h5>Buy Number</h5>
 
-    <select id="country">
-      <option value="CA">CA</option>
-      <option value="US">US</option>
-        <option value="PR">PR</option>
-    </select>
+<select id="country" class="form-select mb-2">
+<option value="US">United States</option>
+<option value="CA">Canada</option>
+</select>
 
-    <input id="area" placeholder="Area Code">
-    <button class="blue" onclick="search()">Search</button>
+<button class="btn btn-success mb-3" onclick="loadNumbers()">
+Load 5 Numbers
+</button>
 
-    <div id="search"></div>
+<div id="availableNumbers"></div>
 </div>
 
-<!-- SMS -->
-<div class="box sms">
-    <h3>💬 Live SMS (BD Time 🇧🇩)</h3>
-    <div id="sms"></div>
+<div class="card p-3 mb-3">
+<h5>Current Numbers</h5>
+<div id="ownedNumbers"></div>
 </div>
 
-<button class="red" onclick="logout()">Logout</button>
+<div class="card p-3">
+<h5>Recent Incoming SMS</h5>
+<div id="smsList" class="sms-box"></div>
+</div>
 
 </div>
 
@@ -147,130 +98,128 @@ button{
 
 <script>
 
-/* AUTO LOGIN */
-window.onload = async function(){
-    let saved = localStorage.getItem("auth");
-
-    if(saved){
-        let res = await fetch("/login",{
-            method:"POST",
-            headers:{"Content-Type":"application/json"},
-            body:JSON.stringify({auth:saved})
-        });
-
-        let data = await res.json();
-
-        if(data.success){
-            document.getElementById("app").style.display="block";
-            loadNumbers();
-            loadSMS();
-            setInterval(loadSMS,5000);
-        }else{
-            localStorage.removeItem("auth");
-        }
-    }
-}
-
-/* LOGIN */
 async function login(){
-    let auth=document.getElementById("auth").value;
-
-    let res=await fetch("/login",{
+    let r = await fetch("/login",{
         method:"POST",
-        headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({auth})
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({
+            sid:document.getElementById("sid").value,
+            token:document.getElementById("token").value
+        })
     });
 
-    let data=await res.json();
+    let data = await r.json();
 
     if(data.success){
+        document.getElementById("loginCard").style.display="none";
+        document.getElementById("dashboard").style.display="block";
 
-        localStorage.setItem("auth",auth);
-
-        document.getElementById("app").style.display="block";
-
-        loadNumbers();
-        loadSMS();
-        setInterval(loadSMS,5000);
-
+        refreshNumbers();
+        refreshSMS();
     }else{
-        alert(data.error);
+        document.getElementById("loginMsg").innerHTML =
+        '<div class="alert alert-danger">'+data.error+'</div>';
     }
 }
 
-/* LOGOUT */
-function logout(){
-    localStorage.removeItem("auth");
+async function logout(){
+    await fetch("/logout");
     location.reload();
 }
 
-/* LOAD NUMBERS */
 async function loadNumbers(){
-    let res=await fetch("/numbers");
-    let data=await res.json();
 
-    document.getElementById("numbers").innerHTML=
-    data.map(n=>
-        `<div class="row">
-            📞 ${n.phone}
-            <button class="red" onclick="del('${n.sid}')">Delete</button>
-        </div>`
-    ).join("");
-}
+    let country =
+    document.getElementById("country").value;
 
-/* DELETE */
-async function del(sid){
-    await fetch("/delete",{
-        method:"POST",
-        headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({sid})
+    let r = await fetch("/available?country="+country);
+
+    let data = await r.json();
+
+    let html="";
+
+    data.forEach(n=>{
+        html += `
+        <div class="mb-2">
+            ${n}
+            <button class="btn btn-sm btn-success"
+            onclick="buyNumber('${n}')">
+            Buy
+            </button>
+        </div>
+        `;
     });
 
-    loadNumbers();
+    document.getElementById("availableNumbers").innerHTML = html;
 }
 
-/* SEARCH */
-async function search(){
-    let country=document.getElementById("country").value;
-    let area=document.getElementById("area").value;
+async function buyNumber(num){
 
-    let res=await fetch(`/available?country=${country}&area=${area}`);
-    let data=await res.json();
-
-    document.getElementById("search").innerHTML=
-    data.map(n=>
-        `<div class="row">
-            📞 ${n}
-            <button class="green" onclick="buy('${n}')">Buy</button>
-        </div>`
-    ).join("");
-}
-
-/* BUY */
-async function buy(num){
     await fetch("/buy",{
         method:"POST",
-        headers:{"Content-Type":"application/json"},
+        headers:{'Content-Type':'application/json'},
         body:JSON.stringify({number:num})
     });
 
-    loadNumbers();
+    refreshNumbers();
 }
 
-/* SMS */
-async function loadSMS(){
-    let res=await fetch("/sms");
-    let data=await res.json();
+async function refreshNumbers(){
 
-    document.getElementById("sms").innerHTML=
-    data.map(m=>
-        `<div class="row">
-            💌 <b>${m.from}</b><br>
-            ${m.time}<br>
-            ${m.body}
-        </div>`
-    ).join("");
+    let r = await fetch("/numbers");
+    let data = await r.json();
+
+    let html="";
+
+    data.forEach(n=>{
+
+        html += `
+        <div class="mb-2">
+            ${n.phone}
+            <button
+            class="btn btn-danger btn-sm"
+            onclick="deleteNumber('${n.sid}')">
+            Delete
+            </button>
+        </div>
+        `;
+    });
+
+    document.getElementById("ownedNumbers").innerHTML = html;
 }
+
+async function deleteNumber(sid){
+
+    await fetch("/delete",{
+        method:"POST",
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({sid:sid})
+    });
+
+    refreshNumbers();
+}
+
+async function refreshSMS(){
+
+    let r = await fetch("/sms");
+    let data = await r.json();
+
+    let html="";
+
+    data.forEach(m=>{
+
+        html += `
+        <div class="border rounded p-2 mb-2">
+        <b>${m.from}</b><br>
+        ${m.body}
+        </div>
+        `;
+    });
+
+    document.getElementById("smsList").innerHTML = html;
+}
+
+setInterval(refreshSMS,5000);
 
 </script>
 
@@ -278,12 +227,8 @@ async function loadSMS(){
 </html>
 """
 
-# =========================
-# BACKEND
-# =========================
-
-def get_client():
-    if "sid" not in session or "token" not in session:
+def client():
+    if "sid" not in session:
         return None
     return Client(session["sid"], session["token"])
 
@@ -293,96 +238,108 @@ def home():
 
 @app.route("/login", methods=["POST"])
 def login():
-    data=request.json
-    auth=data.get("auth","")
+    data = request.json
+
+    sid = data["sid"]
+    token = data["token"]
 
     try:
-        sid,token=auth.split(":",1)
-        Client(sid,token).api.accounts(sid).fetch()
+        c = Client(sid, token)
+        c.api.accounts(sid).fetch()
 
-        session["sid"]=sid
-        session["token"]=token
+        session["sid"] = sid
+        session["token"] = token
 
         return jsonify(success=True)
 
     except Exception as e:
-        return jsonify(success=False,error=str(e))
+        return jsonify(
+            success=False,
+            error="Invalid SID or Token"
+        )
 
-@app.route("/numbers")
-def numbers():
-    c=get_client()
-    if not c:
-        return jsonify(error="not logged in"),401
-
-    return jsonify([
-        {"sid":n.sid,"phone":n.phone_number}
-        for n in c.incoming_phone_numbers.list()
-    ])
-
-@app.route("/delete",methods=["POST"])
-def delete():
-    c=get_client()
-    if not c:
-        return jsonify(error="not logged in"),401
-
-    sid=request.json["sid"]
-
-    try:
-        c.incoming_phone_numbers(sid).delete()
-        return jsonify(ok=True)
-    except:
-        return jsonify(ok=False)
+@app.route("/logout")
+def logout():
+    session.clear()
+    return jsonify(ok=True)
 
 @app.route("/available")
 def available():
-    c=get_client()
-    if not c:
-        return jsonify(error="not logged in"),401
 
-    country=request.args.get("country","US")
-    area=request.args.get("area","")
+    c = client()
 
-    q=c.available_phone_numbers(country).local
+    country = request.args.get("country","US")
 
-    nums=q.list(area_code=area,limit=5) if area else q.list(limit=5)
+    nums = c.available_phone_numbers(
+        country
+    ).local.list(limit=5)
 
-    return jsonify([n.phone_number for n in nums])
+    return jsonify([
+        n.phone_number
+        for n in nums
+    ])
 
-@app.route("/buy",methods=["POST"])
+@app.route("/buy", methods=["POST"])
 def buy():
-    c=get_client()
-    if not c:
-        return jsonify(error="not logged in"),401
 
-    num=request.json["number"]
-    c.incoming_phone_numbers.create(phone_number=num)
+    c = client()
+
+    number = request.json["number"]
+
+    c.incoming_phone_numbers.create(
+        phone_number=number
+    )
+
+    return jsonify(ok=True)
+
+@app.route("/numbers")
+def numbers():
+
+    c = client()
+
+    result = []
+
+    for n in c.incoming_phone_numbers.list():
+
+        result.append({
+            "sid":n.sid,
+            "phone":n.phone_number
+        })
+
+    return jsonify(result)
+
+@app.route("/delete", methods=["POST"])
+def delete_number():
+
+    c = client()
+
+    sid = request.json["sid"]
+
+    c.incoming_phone_numbers(
+        sid
+    ).delete()
 
     return jsonify(ok=True)
 
 @app.route("/sms")
 def sms():
-    c=get_client()
-    if not c:
-        return jsonify(error="not logged in"),401
 
-    msgs=c.messages.list(limit=20)
+    c = client()
 
-    bd=ZoneInfo("Asia/Dhaka")
+    messages = c.messages.list(limit=50)
 
-    out=[]
-    for m in msgs:
-        if m.direction=="inbound":
-            dt=m.date_created
-            if dt:
-                dt=dt.astimezone(bd)
+    result = []
 
-            out.append({
+    for m in messages:
+
+        if m.direction == "inbound":
+
+            result.append({
                 "from":m.from_,
-                "body":m.body,
-                "time":dt.strftime("%H:%M:%S") if dt else ""
+                "body":m.body
             })
 
-    return jsonify(out)
+    return jsonify(result)
 
-if __name__=="__main__":
+if __name__ == "__main__":
     app.run(debug=True)
